@@ -14,7 +14,7 @@ input,select{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d0d
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.row{display:flex;gap:8px;flex-wrap:wrap}.row button{flex:1;min-width:125px}
 button{border:0;border-radius:11px;padding:12px 14px;background:#222;color:#fff;font-weight:600}
 button.alt{background:#e5e5ea;color:#111}.danger{background:#8e0000}
-.metric{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric div{background:#f2f2f7;border-radius:11px;padding:10px}.metric b{display:block;font-size:20px;margin-top:3px}
+.metric{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric div{background:#f2f2f7;border-radius:11px;padding:10px}.metric b{display:block;font-size:20px;margin-top:3px}.bolus{background:#eef6ff;border:1px solid #cfe5ff;border-radius:12px;padding:12px;margin-top:10px}.bolusGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.bolusGrid div{background:#fff;border-radius:9px;padding:9px}.bolusGrid b{display:block;font-size:18px;margin-top:3px}
 canvas{width:100%;height:230px;background:#fafafa;border-radius:10px}.small{font-size:12px;color:#666;line-height:1.45}
 .status{font-size:13px;padding:9px 10px;background:#f2f2f7;border-radius:10px}
 @media(max-width:430px){.grid{grid-template-columns:1fr}.metric{grid-template-columns:1fr 1fr}.metric div:last-child{grid-column:1/-1}}
@@ -48,6 +48,7 @@ canvas{width:100%;height:230px;background:#fafafa;border-radius:10px}.small{font
 </div>
 
 <div class="card">
+<div class="bolus"><b>Model-simulated loading bolus</b><div class="bolusGrid" style="margin-top:8px"><div>Bolus dose<b id="bolusDose">0.0 µg</b></div><div>Bolus volume<b id="bolusVol">0.00 mL</b></div></div><p class="small" style="margin-bottom:0">현재 Effect-site target에 빠르게 접근하도록 모델상 계산한 초기 bolus입니다. 실제 임상 투여량/펌프 설정값이 아닙니다.</p></div>
 <div class="metric">
 <div>Time<b id="tm">0:00</b></div>
 <div>Ce (ng/mL)<b id="ce">0.00</b></div>
@@ -100,10 +101,20 @@ function step(x,dt,u){
  let k1=deriv(x,u),k2=deriv(add(x,k1,dt/2),u),k3=deriv(add(x,k2,dt/2),u),k4=deriv(add(x,k3,dt),u);
  return {c1:x.c1+dt*(k1[0]+2*k2[0]+2*k3[0]+k4[0])/6,c2:x.c2+dt*(k1[1]+2*k2[1]+2*k3[1]+k4[1])/6,c3:x.c3+dt*(k1[2]+2*k2[2]+2*k3[2]+k4[2])/6,ce:x.ce+dt*(k1[3]+2*k2[3]+2*k3[3]+k4[3])/6};
 }
+function loadingBolusInfo(tg){
+ let unit={c1:1,c2:0,c3:0,ce:0},best=0,bestTime=0;
+ for(let i=0;i<6000;i++){
+  unit=step(unit,.01,0);
+  if(unit.ce>best){best=unit.ce;bestTime=(i+1)*.01;}
+ }
+ if(best<=0||pk.v1<=0)return {doseUg:0,volMl:0,peakMin:0};
+ let doseUg=(tg/best)*pk.v1;
+ let volMl=doseUg/num("conc");
+ return {doseUg,volMl,peakMin:bestTime};
+}
 function bolusState(tg){
- let x={c1:0,c2:0,c3:0,ce:0}, unit={c1:1,c2:0,c3:0,ce:0}, best=0;
- for(let i=0;i<600;i++){unit=step(unit,.01,0);best=Math.max(best,unit.ce)}
- let dose=tg/best; x={c1:dose,c2:0,c3:0,ce:0}; return x;
+ let info=loadingBolusInfo(tg), doseC1=info.doseUg/pk.v1;
+ return {c1:doseC1,c2:0,c3:0,ce:0};
 }
 function control(){
  let ce=state.ce, diff=target-ce;
@@ -125,6 +136,7 @@ function render(){
  $("tm").textContent=Math.floor(elapsed/60)+":"+String(elapsed%60).padStart(2,"0");
  $("ce").textContent=(state?.ce||0).toFixed(2);$("cp").textContent=(state?.c1||0).toFixed(2);$("tg").textContent=target.toFixed(2);
  let r=control()/num("conc")*60; $("rate").textContent=isFinite(r)?r.toFixed(2):"0.00";
+ let bi=loadingBolusInfo(target); $("bolusDose").textContent=isFinite(bi.doseUg)?bi.doseUg.toFixed(1)+" µg":"0.0 µg"; $("bolusVol").textContent=isFinite(bi.volMl)?bi.volMl.toFixed(2)+" mL":"0.00 mL";
  $("status").textContent=running?(infusion?"Running — simulated infusion ON":"Running — simulated infusion OFF"):"Paused / ready";
  draw($("ceChart"),"ce","ng/mL");draw($("rateChart"),"rate","mL/hr");
 }
