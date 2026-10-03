@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8">
+<title>RemiTCI Ce v4</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;color:#111;background:#f2f2f7}
+body{margin:0;background:#f2f2f7}.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
+h1{font-size:25px;margin:4px 0 3px}.sub{color:#666;font-size:13px;margin-bottom:15px}
+.card{background:#fff;border-radius:16px;padding:15px;margin:10px 0;box-shadow:0 1px 3px #0001}
+label{display:block;font-size:13px;color:#555;margin:9px 0 5px}input,select,button{font:inherit}
+input,select{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d0d0d5;border-radius:10px;background:#fff;font-size:16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.row{display:flex;gap:8px;flex-wrap:wrap}.row button{flex:1;min-width:125px}
+button{border:0;border-radius:11px;padding:12px 14px;background:#222;color:#fff;font-weight:600}
+button.alt{background:#e5e5ea;color:#111}.danger{background:#8e0000}
+.metric{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric div{background:#f2f2f7;border-radius:11px;padding:10px}.metric b{display:block;font-size:20px;margin-top:3px}
+canvas{width:100%;height:230px;background:#fafafa;border-radius:10px}.small{font-size:12px;color:#666;line-height:1.45}
+.status{font-size:13px;padding:9px 10px;background:#f2f2f7;border-radius:10px}
+@media(max-width:430px){.grid{grid-template-columns:1fr}.metric{grid-template-columns:1fr 1fr}.metric div:last-child{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>RemiTCI Ce</h1>
+<div class="sub">Minto / Eleveld PK-PD educational simulation · iPhone web app</div>
+
+<div class="card">
+<label>Model</label><select id="model"><option>Minto</option><option>Eleveld</option></select>
+<div class="grid">
+<div><label>Age</label><input id="age" type="number" value="40"></div>
+<div><label>Sex</label><select id="sex"><option>Male</option><option>Female</option></select></div>
+<div><label>Height (cm)</label><input id="height" type="number" value="170"></div>
+<div><label>Weight (kg)</label><input id="weight" type="number" value="70"></div>
+</div>
+</div>
+
+<div class="card">
+<div class="grid">
+<div><label>Remifentanil concentration (µg/mL)</label><input id="conc" type="number" step="0.1" value="50"></div>
+<div><label>Effect-site Target (ng/mL)</label><input id="target" type="number" step="0.1" value="3"></div>
+</div>
+<div class="row" style="margin-top:12px">
+<button id="start">▶ Start</button><button id="pause" class="alt">Pause</button>
+<button id="toggle" class="alt">Stop infusion</button><button id="apply" class="alt">Apply new target</button>
+<button id="reset" class="alt">Reset</button>
+</div>
+</div>
+
+<div class="card">
+<div class="metric">
+<div>Time<b id="tm">0:00</b></div>
+<div>Ce (ng/mL)<b id="ce">0.00</b></div>
+<div>Target (ng/mL)<b id="tg">3.00</b></div>
+<div>Simulated rate (mL/hr)<b id="rate">0.00</b></div>
+<div>CP (ng/mL)<b id="cp">0.00</b></div>
+</div>
+<p class="status" id="status">Ready — educational simulation only.</p>
+</div>
+
+<div class="card"><b>Effect-site concentration</b><canvas id="ceChart"></canvas></div>
+<div class="card"><b>Simulated infusion rate</b><canvas id="rateChart"></canvas></div>
+<div class="card"><p class="small"><b>주의:</b> 이 웹앱은 교육·연구용 PK-PD 시뮬레이션입니다. 실제 환자의 레미펜타닐 투여량이나 TCI 펌프 설정을 결정하기 위한 의료기기가 아닙니다. 표시되는 rate는 모델 시뮬레이션 출력입니다.</p></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let running=false, infusion=true, elapsed=0, target=3, timer=null, state=null, pk=null, points=[];
+function num(id){return Math.max(0,parseFloat($(id).value)||0)}
+function ageFactor(k,a){return Math.exp(k*(a-40))}
+function lbm(a,s,h,w){return s==="Male"?1.10*w-128*w*w/(h*h):1.07*w-148*w*w/(h*h)}
+function ffm(a,s,h,w){let bmi=w/((h/100)**2);return s==="Male"?0.88*w+1.3*(h-170)-6.2*(bmi-22):0.85*w+1.2*(h-160)-5.4*(bmi-22)}
+function makePK(){
+ let a=num("age"),h=num("height"),w=num("weight"),s=$("sex").value;
+ let v1,v2,v3,cl1,cl2,cl3,ke0;
+ if($("model").value==="Minto"){
+  let l=lbm(a,s,h,w);
+  v1=5.1-.0201*(a-40)+.072*(l-55);v2=9.82-.0811*(a-40)+.108*(l-55);v3=5.42;
+  cl1=2.6-.0162*(a-40)+.0191*(l-55);cl2=2.05-.0301*(a-40);cl3=.076-.00113*(a-40);ke0=.595-.007*(a-40);
+ }else{
+  let f=ffm(a,s,h,w), fs=f/70, sex=s==="Male"?1:0.9;
+  v1=5.81*fs*ageFactor(-.00554,a);v2=8.82*fs*ageFactor(-.00327,a)*sex;
+  v3=5.03*fs*ageFactor(-.0315,a)*Math.exp(-.026*(w-70));
+  cl1=2.58*Math.pow(fs,.75)*sex*ageFactor(-.00327,a);
+  cl2=1.72*Math.pow(v2/8.82,.75)*ageFactor(-.00554,a)*sex;
+  cl3=.124*Math.pow(v3/5.03,.75)*ageFactor(-.00554,a);ke0=1.09*ageFactor(-.0289,a);
+ }
+ let k10=cl1/v1,k12=cl2/v1,k13=cl3/v1,k21=cl2/v2,k31=cl3/v3;
+ return {v1,v2,v3,cl1,cl2,cl3,ke0,k10,k12,k13,k21,k31};
+}
+function deriv(x,u){
+ let {v1,ke0,k10,k12,k13,k21,k31}=pk;
+ return [
+ -(k10+k12+k13)*x.c1+k21*x.c2+k31*x.c3+u/v1,
+ k12*x.c1-k21*x.c2,k13*x.c1-k31*x.c3,ke0*(x.c1-x.ce)
+ ];
+}
+function step(x,dt,u){
+ function add(x,d,f){return {c1:x.c1+d[0]*f,c2:x.c2+d[1]*f,c3:x.c3+d[2]*f,ce:x.ce+d[3]*f}}
+ let k1=deriv(x,u),k2=deriv(add(x,k1,dt/2),u),k3=deriv(add(x,k2,dt/2),u),k4=deriv(add(x,k3,dt),u);
+ return {c1:x.c1+dt*(k1[0]+2*k2[0]+2*k3[0]+k4[0])/6,c2:x.c2+dt*(k1[1]+2*k2[1]+2*k3[1]+k4[1])/6,c3:x.c3+dt*(k1[2]+2*k2[2]+2*k3[2]+k4[2])/6,ce:x.ce+dt*(k1[3]+2*k2[3]+2*k3[3]+k4[3])/6};
+}
+function bolusState(tg){
+ let x={c1:0,c2:0,c3:0,ce:0}, unit={c1:1,c2:0,c3:0,ce:0}, best=0;
+ for(let i=0;i<600;i++){unit=step(unit,.01,0);best=Math.max(best,unit.ce)}
+ let dose=tg/best; x={c1:dose,c2:0,c3:0,ce:0}; return x;
+}
+function control(){
+ let ce=state.ce, diff=target-ce;
+ let u=Math.max(0,diff*pk.v1*pk.ke0*0.9); // educational predictive control
+ return infusion?u:0;
+}
+function draw(canvas, key, yLabel){
+ let c=canvas,ctx=c.getContext("2d"),d=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;
+ c.width=w*d;c.height=h*d;ctx.scale(d,d);ctx.clearRect(0,0,w,h);
+ if(points.length<1)return;
+ let vals=points.map(p=>p[key]), max=Math.max(...vals, key==="target"?target:0.01), min=Math.min(...vals,0), span=Math.max(max-min,.01);
+ ctx.strokeStyle="#ccc";ctx.lineWidth=1; for(let i=0;i<5;i++){let y=15+i*(h-35)/4;ctx.beginPath();ctx.moveTo(35,y);ctx.lineTo(w-8,y);ctx.stroke()}
+ function path(k,stroke,dash=false){ctx.strokeStyle=stroke;ctx.lineWidth=2;ctx.setLineDash(dash?[5,4]:[]);ctx.beginPath();points.forEach((p,i)=>{let x=35+(p.t/Math.max(points[points.length-1].t,1))*(w-45),y=15+(max-p[k])/span*(h-35);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.setLineDash([])}
+ path(key,"#222");
+ if(key==="ce")path("target","#777",true);
+ ctx.fillStyle="#666";ctx.font="11px -apple-system-body";ctx.fillText(yLabel,4,12);
+}
+function render(){
+ $("tm").textContent=Math.floor(elapsed/60)+":"+String(elapsed%60).padStart(2,"0");
+ $("ce").textContent=(state?.ce||0).toFixed(2);$("cp").textContent=(state?.c1||0).toFixed(2);$("tg").textContent=target.toFixed(2);
+ let r=control()/num("conc")*60; $("rate").textContent=isFinite(r)?r.toFixed(2):"0.00";
+ $("status").textContent=running?(infusion?"Running — simulated infusion ON":"Running — simulated infusion OFF"):"Paused / ready";
+ draw($("ceChart"),"ce","ng/mL");draw($("rateChart"),"rate","mL/hr");
+}
+function tick(){
+ if(!running)return;
+ let u=control(); for(let i=0;i<10;i++)state=step(state,.1,u);
+ elapsed++; let r=u/num("conc")*60;
+ points.push({t:elapsed,ce:state.ce,target,rate:r});render();
+}
+$("start").onclick=()=>{
+ if(!pk){pk=makePK();target=num("target");state=bolusState(target);points=[];elapsed=0}
+ running=true;clearInterval(timer);timer=setInterval(tick,1000);render();
+};
+$("pause").onclick=()=>{running=false;clearInterval(timer);render()};
+$("toggle").onclick=()=>{infusion=!infusion;$("toggle").textContent=infusion?"Stop infusion":"Resume infusion";render()};
+$("apply").onclick=()=>{target=num("target");if(!state){pk=makePK();state=bolusState(target)} render()};
+$("reset").onclick=()=>{running=false;clearInterval(timer);pk=null;state=null;points=[];elapsed=0;target=num("target");infusion=true;$("toggle").textContent="Stop infusion";render()};
+window.addEventListener("resize",render);target=num("target");render();
+</script>
+</body>
+</html>
